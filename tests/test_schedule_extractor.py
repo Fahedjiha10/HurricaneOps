@@ -179,11 +179,16 @@ class ScheduleExtractorRowTests(unittest.TestCase):
     def test_workbook_expands_and_reconciles_full_door_schedule(self) -> None:
         doors = []
         for number in range(101, 126):
+            door_type = "SWING"
+            if number == 103:
+                door_type = "POCKET"
+            elif number == 107:
+                door_type = "BARN"
             doors.append(
                 {
                     "door_no": str(number),
                     "location": f"ROOM {number}",
-                    "type": "SWING",
+                    "type": door_type,
                     "width": "2' - 8\"",
                     "height": "7' - 0\"",
                     "thickness": "",
@@ -224,9 +229,16 @@ class ScheduleExtractorRowTests(unittest.TestCase):
             self.assertEqual(sheet["B13"].value, "PAINTED WOOD")
             self.assertEqual(sheet["Z4"].value, "125")
             self.assertEqual(sheet["A20"].value, "Count Check")
-            self.assertEqual(sheet["A22"].value, "101")
-            self.assertEqual(sheet["B22"].value, 1)
-            self.assertEqual(sheet["C22"].value, "=COUNTIF($B$4:$Z$4,A22)")
+            self.assertEqual(sheet["A21"].value, "Type")
+            self.assertEqual(sheet["B21"].value, "Count")
+            self.assertEqual(sheet["A22"].value, "SWING")
+            self.assertEqual(sheet["B22"].value, "=COUNTIF($B$5:$Z$5,A22)")
+            self.assertEqual(sheet["A23"].value, "POCKET")
+            self.assertEqual(sheet["B23"].value, "=COUNTIF($B$5:$Z$5,A23)")
+            self.assertEqual(sheet["A24"].value, "BARN")
+            self.assertEqual(sheet["B24"].value, "=COUNTIF($B$5:$Z$5,A24)")
+            self.assertEqual(sheet["A25"].value, "Total : ")
+            self.assertEqual(sheet["B25"].value, "=SUM(B22:B24)")
             self.assertIn("A1:Z1", [str(item) for item in sheet.merged_cells.ranges])
 
     def test_workbook_expands_and_reconciles_window_schedule(self) -> None:

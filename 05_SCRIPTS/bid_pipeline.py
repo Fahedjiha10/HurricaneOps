@@ -726,6 +726,38 @@ def _write_count_check(
         sheet.cell(total_row, 3).value = f"=SUM(C{first_data_row}:C{total_row - 1})"
 
 
+def _write_door_count_check(sheet, doors: list[dict[str, str]]) -> None:
+    door_types: list[str] = []
+    seen: set[str] = set()
+    for door in doors:
+        door_type = str(door.get("type") or "").strip().upper()
+        if not door_type or door_type in seen:
+            continue
+        seen.add(door_type)
+        door_types.append(door_type)
+
+    title_row = 20
+    header_row = title_row + 1
+    first_data_row = title_row + 2
+    total_row = first_data_row + len(door_types)
+    clear_end_row = max(sheet.max_row, total_row + 1)
+    for row_index in range(title_row, clear_end_row + 1):
+        for column_index in range(1, 3):
+            sheet.cell(row_index, column_index).value = None
+
+    sheet.cell(title_row, 1).value = "Count Check"
+    sheet.cell(header_row, 1).value = "Type"
+    sheet.cell(header_row, 2).value = "Count"
+    last_column = get_column_letter(sheet.max_column)
+    for offset, door_type in enumerate(door_types):
+        row_index = first_data_row + offset
+        sheet.cell(row_index, 1).value = door_type
+        sheet.cell(row_index, 2).value = f"=COUNTIF($B$5:${last_column}$5,A{row_index})"
+    if door_types:
+        sheet.cell(total_row, 1).value = "Total : "
+        sheet.cell(total_row, 2).value = f"=SUM(B{first_data_row}:B{total_row - 1})"
+
+
 def _candidate_notes(row: dict[str, str]) -> str:
     return _join_notes(
         f"Quantity: {row['quantity']}" if row.get("quantity") else "",
@@ -1336,7 +1368,7 @@ def _create_workbook_draft(
             f"Source: {row['source']}",
         )
         _set_blank(doors_sheet, f"{column}17", door_notes)
-    _write_count_check(doors_sheet, 20, 4, quote_doors, "door_no")
+    _write_door_count_check(doors_sheet, quote_doors)
 
     if "Automation Review" in workbook.sheetnames:
         del workbook["Automation Review"]
@@ -1361,6 +1393,9 @@ def _create_workbook_draft(
     review.append(["Existing formulas were preserved."])
     review.column_dimensions["A"].width = 110
 
+    workbook.calculation.calcMode = "auto"
+    workbook.calculation.fullCalcOnLoad = True
+    workbook.calculation.forceFullCalc = True
     workbook.save(draft_path)
     after_formulas = _formula_map(draft_path)
     if before_formulas != {
