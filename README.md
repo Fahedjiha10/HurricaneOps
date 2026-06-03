@@ -77,8 +77,13 @@ The dashboard's Critical Issue Action Center links each critical item to its
 best matching copied PDF, CSV, workbook, or QA file. Estimators can record an
 accept/deny/RFI decision or enter a verified value that is written directly into
 the filled quote workbook. Workbook Count Check tables are regenerated for
-Windows, Storefronts, and Doors so each extracted mark or door number is counted
-against the generated unit columns.
+Windows, Storefronts, and Doors so window/storefront marks and door types are
+counted against the generated unit columns.
+When a project address is provided, HurricaneOps looks up the municipality or
+permit jurisdiction using the US Census Geocoder, stores the result in
+`municipality_lookup.json`, and shows it in the dashboard. If no incorporated
+municipality is returned, the dashboard flags the jurisdiction for manual review
+instead of guessing.
 When an
 earlier completed job is selected, the dashboard offers a one-click action to
 create or refresh the organized downloads from its preserved source PDFs.

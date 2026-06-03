@@ -27,6 +27,7 @@ from config import (
 )
 from export_quote import quote_rows_from_structured, write_extraction_outputs
 from job_intake import IntakeError, _organize_source_pdfs, create_job_from_inbox
+from municipality_lookup import lookup_municipality
 from schedule_extractor import ScheduleExtractor
 from schemas import ExtractionResult
 from validators import HUMAN_REVIEW_THRESHOLD
@@ -1714,6 +1715,7 @@ def _write_pipeline_summary(
     project_name: str,
     address: str,
     notes: str,
+    municipality_lookup: dict[str, object],
 ) -> Path:
     raw_door_count = sum(
         not row["extraction_status"].startswith("TABLE PARSED") for row in doors
@@ -1731,6 +1733,8 @@ def _write_pipeline_summary(
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "project_name": project_name or "Untitled Project",
         "address": address or "Address Not Provided",
+        "municipality_location": municipality_lookup.get("display_name", ""),
+        "municipality_lookup": municipality_lookup,
         "notes": notes,
         "organized_plan_schema_version": ORGANIZED_PLAN_SCHEMA_VERSION,
         "status": "REVIEW REQUIRED" if critical_issues else "READY FOR REVIEW",
@@ -1774,6 +1778,7 @@ def _write_pipeline_summary(
             "glazing_thermal_requirements.json": "02_Schedules/glazing_thermal_requirements.json",
             "door_workbook_transfer_audit.json": "02_Schedules/door_workbook_transfer_audit.json",
             **_organized_review_files(),
+            "municipality_lookup.json": "municipality_lookup.json",
             "proposal_email_draft.txt": "06_Proposal_Email/proposal_email_draft.txt",
             "full_job_package.zip": "full_job_package.zip",
         },
@@ -1829,6 +1834,8 @@ def _append_jobs_index(job_dir: Path, summary: dict[str, object]) -> None:
         "job_id",
         "project_name",
         "address",
+        "municipality_location",
+        "municipality_status",
         "created_at",
         "job_folder",
         "critical_count",
@@ -1844,6 +1851,12 @@ def _append_jobs_index(job_dir: Path, summary: dict[str, object]) -> None:
         "job_id": str(summary["job_id"]),
         "project_name": str(summary["project_name"]),
         "address": str(summary["address"]),
+        "municipality_location": str(summary.get("municipality_location", "")),
+        "municipality_status": str(
+            summary.get("municipality_lookup", {}).get("status", "")
+            if isinstance(summary.get("municipality_lookup"), dict)
+            else ""
+        ),
         "created_at": str(summary["generated_at"]),
         "job_folder": str(job_dir.resolve()),
         "critical_count": str(summary["critical_count"]),
@@ -1872,6 +1885,15 @@ def run_bid_pipeline(
         project_name=project_name,
         address=address,
     )
+    municipality_result = lookup_municipality(address).to_dict()
+    (job_dir / "municipality_lookup.json").write_text(
+        json.dumps(municipality_result, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    if municipality_result.get("display_name"):
+        print(f"[HurricaneOps] Municipality: {municipality_result['display_name']}")
+    elif municipality_result.get("warning"):
+        print(f"[HurricaneOps] Municipality lookup: {municipality_result['warning']}")
     sheet_index = _load_sheet_index(job_dir)
     door_pages = _indexed_sheet_paths(job_dir, sheet_index, "door_schedules")
     window_pages = _indexed_sheet_paths(job_dir, sheet_index, "window_schedules")
@@ -2045,6 +2067,7 @@ def run_bid_pipeline(
         project_name,
         address,
         notes,
+        municipality_result,
     )
     _write_job_zip(job_dir)
     summary = json.loads(summary_path.read_text(encoding="utf-8"))

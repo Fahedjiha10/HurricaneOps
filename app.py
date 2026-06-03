@@ -37,6 +37,7 @@ from config import (
     ORGANIZED_PLAN_SCHEMA_VERSION,
 )
 from job_intake import IntakeError, inspect_inbox
+from municipality_lookup import lookup_municipality
 
 
 REVIEW_STATUSES = ("Open", "Resolved", "Accepted Risk", "Denied / Needs RFI")
@@ -93,6 +94,8 @@ def load_summaries() -> list[dict[str, object]]:
         summary.setdefault("job_id", summary.get("job_name", summary_path.parent.name))
         summary.setdefault("project_name", "Legacy job")
         summary.setdefault("address", "Not recorded")
+        summary.setdefault("municipality_location", "")
+        summary.setdefault("municipality_lookup", {})
         summary.setdefault("qa_issues", [])
         summary.setdefault(
             "qa_issue_counts",
@@ -111,6 +114,30 @@ def load_job_history() -> list[dict[str, str]]:
             for row in csv.DictReader(handle):
                 rows[row["job_id"]] = row
     return sorted(rows.values(), key=lambda row: row.get("created_at", ""), reverse=True)
+
+
+def render_municipality_lookup(result: dict[str, object]) -> None:
+    status = str(result.get("status") or "")
+    display_name = str(result.get("display_name") or "")
+    warning = str(result.get("warning") or "")
+    if status == "FOUND" and display_name:
+        st.success(f"Municipality / jurisdiction: {display_name}")
+    elif status == "UNINCORPORATED_OR_UNKNOWN":
+        st.warning(
+            f"Municipality / jurisdiction needs review: {display_name or 'Not confirmed'}"
+        )
+    elif status in {"NO_MATCH", "LOOKUP_FAILED"}:
+        st.error(warning or "Municipality lookup failed.")
+    elif status == "NOT_PROVIDED":
+        st.info(warning or "Enter an address to look up the municipality.")
+    elif display_name:
+        st.info(f"Municipality / jurisdiction: {display_name}")
+    if result.get("matched_address"):
+        st.caption(f"Matched address: {result['matched_address']}")
+    if result.get("municipality_type"):
+        st.caption(f"Lookup type: {result['municipality_type']} | Source: {result.get('source', '')}")
+    if warning and status not in {"NO_MATCH", "LOOKUP_FAILED", "NOT_PROVIDED"}:
+        st.caption(warning)
 
 
 def load_icloud_sync_state() -> dict[str, object]:
@@ -543,6 +570,26 @@ with st.container(border=True):
     project_address = project_right.text_input(
         "Project address", placeholder="Example: 268 NE 80th Ter, Miami FL"
     )
+    lookup_key = "new_job_municipality_lookup"
+    lookup_address = st.session_state.get(f"{lookup_key}_address", "")
+    if project_right.button(
+        "Find municipality",
+        disabled=not project_address.strip(),
+        help="Uses the entered address to look up the incorporated municipality or jurisdiction.",
+        width="stretch",
+    ):
+        with st.spinner("Looking up municipality..."):
+            st.session_state[lookup_key] = lookup_municipality(project_address).to_dict()
+            st.session_state[f"{lookup_key}_address"] = project_address.strip()
+            lookup_address = project_address.strip()
+    municipality_preview = st.session_state.get(lookup_key)
+    if (
+        isinstance(municipality_preview, dict)
+        and lookup_address == project_address.strip()
+    ):
+        render_municipality_lookup(municipality_preview)
+    elif project_address.strip():
+        st.caption("Municipality will also be looked up automatically when the pipeline runs.")
     notes = st.text_area("Optional notes", placeholder="Estimator notes, bid date, scope reminders...")
     use_existing_inbox = st.checkbox(
         "Use the files already staged in 00_INBOX",
@@ -647,6 +694,14 @@ else:
     st.write(f"**Job name:** `{selected_summary['job_name']}`")
     st.write(f"**Job folder:** `{job_dir}`")
     st.write(f"**Created:** `{selected_summary['generated_at']}`")
+    municipality_lookup = selected_summary.get("municipality_lookup", {})
+    municipality_location = str(selected_summary.get("municipality_location") or "")
+    if isinstance(municipality_lookup, dict) and municipality_lookup:
+        render_municipality_lookup(municipality_lookup)
+    elif municipality_location:
+        st.write(f"**Municipality / jurisdiction:** `{municipality_location}`")
+    else:
+        st.info("Municipality / jurisdiction not recorded for this job.")
 
     item_metrics = st.columns(5)
     item_metrics[0].metric("Windows", counts.get("quote_window_rows", counts["windows"]))
