@@ -96,13 +96,23 @@ def load_summaries() -> list[dict[str, object]]:
         summary.setdefault("address", "Not recorded")
         summary.setdefault("municipality_location", "")
         summary.setdefault("municipality_lookup", {})
+        summary["_summary_path"] = str(summary_path)
+        summary["_summary_mtime"] = summary_path.stat().st_mtime
         summary.setdefault("qa_issues", [])
         summary.setdefault(
             "qa_issue_counts",
             {"LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": summary.get("critical_count", 0)},
         )
         summaries.append(summary)
-    return sorted(summaries, key=lambda summary: str(summary["generated_at"]), reverse=True)
+    return sorted(
+        summaries,
+        key=lambda summary: (
+            str(summary.get("generated_at", "")),
+            float(summary.get("_summary_mtime", 0)),
+            str(summary.get("job_id", "")),
+        ),
+        reverse=True,
+    )
 
 
 def load_job_history() -> list[dict[str, str]]:
@@ -596,6 +606,7 @@ with st.container(border=True):
         value=True,
         help="Turn this off to stage a new local upload set for this run.",
     )
+    upload_reset_nonce = int(st.session_state.get("upload_reset_nonce", 0))
     upload_left, upload_right = st.columns(2)
     pdf_files = upload_left.file_uploader(
         "Upload PDF plan set",
@@ -603,12 +614,14 @@ with st.container(border=True):
         accept_multiple_files=True,
         disabled=use_existing_inbox,
         help="Select one combined plan-set PDF or multiple PDF sheets. Files stay local to this Mac.",
+        key=f"pdf-plan-upload-{upload_reset_nonce}",
     )
     excel_file = upload_right.file_uploader(
         "Upload Excel quote template",
         type=["xlsx", "xlsm", "xltx", "xltm", "xls"],
         disabled=use_existing_inbox,
         help="Select one quote workbook template. Files stay local to this Mac.",
+        key=f"excel-template-upload-{upload_reset_nonce}",
     )
 
     staged_status = inspect_inbox()
@@ -622,6 +635,10 @@ with st.container(border=True):
     else:
         intake_ready = intake_ready and bool(pdf_files) and excel_file is not None
         st.caption(f"Uploaded plan-set PDF files: {len(pdf_files or [])}")
+        st.caption(
+            "After an upload run completes, HurricaneOps clears this upload batch "
+            "so the next project cannot accidentally reuse the previous PDFs."
+        )
 
     run_clicked = st.button(
         "Run bid pipeline",
@@ -648,6 +665,9 @@ if run_clicked:
     except (IntakeError, OSError) as exc:
         st.error(f"Pipeline failed: {exc}")
     else:
+        st.session_state["preferred_dashboard_job_id"] = job_dir.name
+        if not use_existing_inbox:
+            st.session_state["upload_reset_nonce"] = upload_reset_nonce + 1
         st.success(f"Pipeline completed: {job_dir.name}")
         if issues:
             st.warning(f"{len(issues)} CRITICAL review items require attention.")
@@ -667,11 +687,19 @@ if not summaries:
 else:
     selected_summary = summaries[0]
     if len(summaries) > 1:
+        dashboard_job_ids = [str(summary["job_id"]) for summary in summaries]
+        preferred_job_id = str(st.session_state.get("preferred_dashboard_job_id", ""))
+        selected_index = (
+            dashboard_job_ids.index(preferred_job_id)
+            if preferred_job_id in dashboard_job_ids
+            else 0
+        )
         selected_job = st.selectbox(
             "Dashboard job",
-            options=[str(summary["job_id"]) for summary in summaries],
-            index=0,
+            options=dashboard_job_ids,
+            index=selected_index,
         )
+        st.session_state["preferred_dashboard_job_id"] = selected_job
         selected_summary = next(
             summary for summary in summaries if summary["job_id"] == selected_job
         )
