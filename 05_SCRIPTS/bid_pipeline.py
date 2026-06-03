@@ -685,6 +685,47 @@ def _ensure_workbook_columns(
     return available
 
 
+def _row_quantity(row: dict[str, str]) -> int:
+    try:
+        quantity = int(str(row.get("quantity") or "1").strip())
+    except ValueError:
+        return 1
+    return max(quantity, 1)
+
+
+def _write_count_check(
+    sheet,
+    title_row: int,
+    identifier_row: int,
+    rows: list[dict[str, str]],
+    identifier_key: str,
+) -> None:
+    entries = [row for row in rows if row.get(identifier_key)]
+    clear_end_row = max(sheet.max_row, title_row + len(entries) + 3)
+    for row_index in range(title_row, clear_end_row + 1):
+        for column_index in range(1, 4):
+            sheet.cell(row_index, column_index).value = None
+    sheet.cell(title_row, 1).value = "Count Check"
+    header_row = title_row + 1
+    sheet.cell(header_row, 1).value = "Mark / Unit ID"
+    sheet.cell(header_row, 2).value = "Schedule Qty"
+    sheet.cell(header_row, 3).value = "Workbook Columns"
+    last_column = get_column_letter(sheet.max_column)
+    first_data_row = title_row + 2
+    for offset, row in enumerate(entries):
+        row_index = first_data_row + offset
+        sheet.cell(row_index, 1).value = row[identifier_key]
+        sheet.cell(row_index, 2).value = _row_quantity(row)
+        sheet.cell(row_index, 3).value = (
+            f'=COUNTIF($B${identifier_row}:${last_column}${identifier_row},A{row_index})'
+        )
+    total_row = first_data_row + len(entries)
+    if entries:
+        sheet.cell(total_row, 1).value = "TOTAL"
+        sheet.cell(total_row, 2).value = f"=SUM(B{first_data_row}:B{total_row - 1})"
+        sheet.cell(total_row, 3).value = f"=SUM(C{first_data_row}:C{total_row - 1})"
+
+
 def _candidate_notes(row: dict[str, str]) -> str:
     return _join_notes(
         f"Quantity: {row['quantity']}" if row.get("quantity") else "",
@@ -1241,6 +1282,7 @@ def _create_workbook_draft(
         _set_blank(windows_sheet, f"{column}14", glazing_requirements.get("u_factor", ""))
         _set_blank(windows_sheet, f"{column}15", glazing_requirements.get("shgc", ""))
         _set_blank(windows_sheet, f"{column}17", _window_notes(row))
+    _write_count_check(windows_sheet, 20, 6, windows, "mark")
 
     storefronts_sheet = workbook["Storefronts"]
     storefronts_sheet["A1"] = "STOREFRONT GLAZING PACKAGE - UNIT COLUMNS"
@@ -1260,6 +1302,7 @@ def _create_workbook_draft(
         _set_blank(storefronts_sheet, f"{column}13", glazing_requirements.get("u_factor", ""))
         _set_blank(storefronts_sheet, f"{column}14", glazing_requirements.get("shgc", ""))
         _set_blank(storefronts_sheet, f"{column}16", _storefront_notes(row))
+    _write_count_check(storefronts_sheet, 19, 4, storefronts, "mark")
 
     doors_sheet = workbook["Doors"]
     doors_sheet["A1"] = "DOOR SCHEDULE - UNIT COLUMNS"
@@ -1293,6 +1336,7 @@ def _create_workbook_draft(
             f"Source: {row['source']}",
         )
         _set_blank(doors_sheet, f"{column}17", door_notes)
+    _write_count_check(doors_sheet, 20, 4, quote_doors, "door_no")
 
     if "Automation Review" in workbook.sheetnames:
         del workbook["Automation Review"]

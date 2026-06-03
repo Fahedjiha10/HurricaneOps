@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 import fitz
+from openpyxl import load_workbook
 import streamlit as st
 
 
@@ -38,7 +39,46 @@ from config import (
 from job_intake import IntakeError, inspect_inbox
 
 
-REVIEW_STATUSES = ("Open", "Resolved", "Accepted Risk")
+REVIEW_STATUSES = ("Open", "Resolved", "Accepted Risk", "Denied / Needs RFI")
+
+WORKBOOK_FIELD_ROWS = {
+    "Windows": {
+        "id_row": 6,
+        "fields": {
+            "Material": 10,
+            "Glass Type": 11,
+            "Frame Finish": 12,
+            "U Factor": 14,
+            "SHGC": 15,
+            "PSF / Zone": 16,
+            "Notes": 17,
+        },
+    },
+    "Storefronts": {
+        "id_row": 4,
+        "fields": {
+            "Material": 10,
+            "Glass Type": 11,
+            "Finish": 12,
+            "U Factor": 13,
+            "SHGC": 14,
+            "PSF / Zone": 15,
+            "Notes": 16,
+        },
+    },
+    "Doors": {
+        "id_row": 4,
+        "fields": {
+            "Door Material": 11,
+            "Frame Material": 12,
+            "Frame Finish Color": 13,
+            "U Factor": 14,
+            "SHGC": 15,
+            "PSF / Zone": 16,
+            "Notes": 17,
+        },
+    },
+}
 
 
 def load_summaries() -> list[dict[str, object]]:
@@ -148,6 +188,7 @@ def load_review_state(job_dir: Path, issues: list[dict[str, str]]) -> dict[str, 
         }
     return {
         "issues": current_issues,
+        "manual_entries": saved.get("manual_entries", []),
         "approved_for_send": bool(saved.get("approved_for_send", False)),
         "approved_by": saved.get("approved_by", ""),
         "approved_at": saved.get("approved_at", ""),
@@ -157,6 +198,10 @@ def load_review_state(job_dir: Path, issues: list[dict[str, str]]) -> dict[str, 
 def save_review_state(job_dir: Path, state: dict[str, object]) -> None:
     path = review_state_path(job_dir)
     path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+
+def _join_note_parts(*parts: str) -> str:
+    return "; ".join(part.strip() for part in parts if part and part.strip())
 
 
 def approval_decision_path(job_dir: Path) -> Path:
@@ -218,6 +263,171 @@ def ensure_pdf_preview(pdf_path: Path) -> Path:
             pixmap.save(temp_path)
         temp_path.replace(preview_path)
     return preview_path
+
+
+def resolve_review_documents(job_dir: Path, source_page: str) -> list[Path]:
+    documents: list[Path] = []
+    organized_dir = job_dir / "07_Organized_Plan_Set"
+
+    def add_compartment_documents(directory_name: str) -> None:
+        compartment_dir = organized_dir / directory_name
+        if compartment_dir.exists():
+            documents.extend(sorted(path for path in compartment_dir.glob("*.pdf") if path.is_file()))
+
+    tokens = [
+        token.strip()
+        for token in source_page.replace(";", ",").split(",")
+        if token.strip()
+    ]
+    for token in tokens:
+        candidate = job_dir / token
+        if candidate.exists():
+            documents.append(candidate)
+            continue
+        token_path = Path(token)
+        if token_path.suffix:
+            matches = sorted(
+                path
+                for path in job_dir.rglob(token_path.name)
+                if path.is_file() and "previews" not in path.parts
+            )
+            documents.extend(matches)
+            continue
+        lowered = token.lower()
+        if "worksheet" in lowered:
+            workbook = job_dir / "04_Quote_Workbook" / "filled_quote_workbook.xlsx"
+            if workbook.exists():
+                documents.append(workbook)
+        elif "indexed" in lowered or "sheet" in lowered:
+            sheet_index = job_dir / "07_Organized_Plan_Set" / "sheet_index.csv"
+            if sheet_index.exists():
+                documents.append(sheet_index)
+    lowered_source = source_page.lower()
+    if "indexed schedule sheets" in lowered_source:
+        add_compartment_documents("02_Door_Schedules")
+        add_compartment_documents("03_Window_Schedules")
+        add_compartment_documents("04_Storefront_Schedules")
+    if "door" in lowered_source and "schedule" in lowered_source:
+        add_compartment_documents("02_Door_Schedules")
+    if "window" in lowered_source and "schedule" in lowered_source:
+        add_compartment_documents("03_Window_Schedules")
+    if "storefront" in lowered_source and "schedule" in lowered_source:
+        add_compartment_documents("04_Storefront_Schedules")
+    if "wind" in lowered_source and ("pressure" in lowered_source or "psf" in lowered_source):
+        add_compartment_documents("06_Wind_Pressure_Elevations")
+        psf_report = job_dir / "05_NOA_PSF_Check" / "psf_zone_report.xlsx"
+        if psf_report.exists():
+            documents.append(psf_report)
+    if not documents:
+        fallback = job_dir / "03_Takeoff_QA" / "qa_report.xlsx"
+        if fallback.exists():
+            documents.append(fallback)
+    unique_documents: list[Path] = []
+    seen: set[Path] = set()
+    for document in documents:
+        resolved = document.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique_documents.append(document)
+    return unique_documents
+
+
+def render_review_documents(job_dir: Path, issue: dict[str, str], key_prefix: str) -> None:
+    documents = resolve_review_documents(job_dir, issue.get("source_page", ""))
+    st.write("**Linked review document(s)**")
+    if not documents:
+        st.info("No source document could be linked automatically. Use the QA report and organized plan set.")
+        return
+    for index, document in enumerate(documents):
+        document_key = hashlib.sha1(str(document.resolve()).encode("utf-8")).hexdigest()[:10]
+        st.caption(str(document.relative_to(job_dir) if document.is_relative_to(job_dir) else document))
+        if document.suffix.lower() == ".pdf":
+            try:
+                st.image(ensure_pdf_preview(document), caption=document.name, width="stretch")
+            except (OSError, ValueError, RuntimeError) as exc:
+                st.warning(f"Could not preview {document.name}: {exc}")
+            mime = "application/pdf"
+        elif document.suffix.lower() == ".xlsx":
+            mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        elif document.suffix.lower() == ".csv":
+            mime = "text/csv"
+        else:
+            mime = "application/octet-stream"
+        st.download_button(
+            f"Download/open {document.name}",
+            data=document.read_bytes(),
+            file_name=document.name,
+            mime=mime,
+            key=f"{key_prefix}-doc-{index}-{document_key}",
+            width="stretch",
+        )
+
+
+def infer_workbook_tab(issue: dict[str, str]) -> str:
+    text = " ".join(
+        issue.get(field, "")
+        for field in ("issue_type", "mark", "source_page", "description", "recommended_action")
+    ).lower()
+    if "storefront" in text or "glazing" in text:
+        return "Storefronts"
+    if "window" in text:
+        return "Windows"
+    if "door" in text:
+        return "Doors"
+    return "Windows"
+
+
+def clean_issue_mark_for_workbook(mark: str) -> str:
+    stripped = mark.strip()
+    if not stripped or stripped.lower() in {"all openings", "psf / zone values"}:
+        return ""
+    if stripped.lower().endswith(" rows"):
+        return ""
+    return stripped
+
+
+def apply_manual_workbook_entry(
+    job_dir: Path,
+    tab_name: str,
+    item_id: str,
+    field_name: str,
+    value: str,
+    overwrite: bool,
+) -> tuple[Path, str]:
+    if tab_name not in WORKBOOK_FIELD_ROWS:
+        raise ValueError(f"Unknown workbook tab: {tab_name}")
+    spec = WORKBOOK_FIELD_ROWS[tab_name]
+    field_rows = spec["fields"]
+    if field_name not in field_rows:
+        raise ValueError(f"Unknown workbook field for {tab_name}: {field_name}")
+    workbook_path = job_dir / "04_Quote_Workbook" / "filled_quote_workbook.xlsx"
+    if not workbook_path.exists():
+        raise FileNotFoundError(f"Missing filled quote workbook: {workbook_path}")
+    workbook = load_workbook(workbook_path, data_only=False)
+    sheet = workbook[tab_name]
+    normalized_item_id = item_id.strip().upper()
+    target_column = None
+    for column_index in range(2, sheet.max_column + 1):
+        cell_value = str(sheet.cell(spec["id_row"], column_index).value or "").strip().upper()
+        if cell_value == normalized_item_id:
+            target_column = column_index
+            break
+    if target_column is None:
+        raise ValueError(f"Could not find `{item_id}` on the {tab_name} worksheet.")
+    target_cell = sheet.cell(field_rows[field_name], target_column)
+    if field_name == "Notes" and target_cell.value:
+        target_cell.value = f"{target_cell.value}; Manual review: {value.strip()}"
+    else:
+        existing = str(target_cell.value or "").strip()
+        if existing and existing != value.strip() and not overwrite:
+            raise ValueError(
+                f"{tab_name}!{target_cell.coordinate} already contains `{existing}`. "
+                "Enable overwrite to replace it."
+            )
+        target_cell.value = value.strip()
+    workbook.save(workbook_path)
+    return workbook_path, f"{tab_name}!{target_cell.coordinate}"
 
 
 def render_download(
@@ -530,6 +740,156 @@ else:
             hide_index=True,
             width="stretch",
         )
+        st.subheader("Critical Issue Action Center")
+        st.caption(
+            "Each issue below links to the best matching review document. "
+            "You can accept, deny/RFI, or manually enter a verified value into the filled quote workbook."
+        )
+        for index, issue in enumerate(critical_rows, start=1):
+            current_issue_id = issue_id(issue)
+            issue_state = review_state["issues"][current_issue_id]
+            key_prefix = f"{job_dir.name}-{current_issue_id}"
+            with st.expander(
+                f"{index}. {issue.get('issue_type', 'Issue')} - {issue.get('mark', '')} "
+                f"({issue_state['status']})",
+                expanded=issue_state["status"] == "Open",
+            ):
+                st.write(f"**Problem:** {issue.get('description', '')}")
+                st.write(f"**Recommended action:** {issue.get('recommended_action', '')}")
+                render_review_documents(job_dir, issue, key_prefix)
+
+                decision_columns = st.columns(3)
+                with decision_columns[0]:
+                    decision_status = st.selectbox(
+                        "Review decision",
+                        REVIEW_STATUSES,
+                        index=REVIEW_STATUSES.index(issue_state["status"])
+                        if issue_state["status"] in REVIEW_STATUSES
+                        else 0,
+                        key=f"{key_prefix}-decision",
+                    )
+                with decision_columns[1]:
+                    resolved_by = st.text_input(
+                        "Estimator",
+                        value=issue_state.get("resolved_by", ""),
+                        key=f"{key_prefix}-resolved-by",
+                    )
+                with decision_columns[2]:
+                    resolution_date = st.text_input(
+                        "Date",
+                        value=issue_state.get(
+                            "resolution_date",
+                            datetime.now().date().isoformat()
+                            if issue_state["status"] != "Open"
+                            else "",
+                        ),
+                        key=f"{key_prefix}-resolution-date",
+                    )
+                estimator_note = st.text_area(
+                    "Estimator note / reason",
+                    value=issue_state.get("estimator_note", ""),
+                    key=f"{key_prefix}-note",
+                )
+                if st.button(
+                    "Save this issue decision",
+                    key=f"{key_prefix}-save-decision",
+                ):
+                    review_state["issues"][current_issue_id] = {
+                        "status": decision_status,
+                        "estimator_note": estimator_note.strip(),
+                        "resolved_by": resolved_by.strip(),
+                        "resolution_date": resolution_date.strip(),
+                    }
+                    review_state["approved_for_send"] = False
+                    review_state["approved_by"] = ""
+                    review_state["approved_at"] = ""
+                    save_review_state(job_dir, review_state)
+                    _write_job_zip(job_dir)
+                    st.success("Issue decision saved. Estimator approval was reset.")
+                    st.rerun()
+
+                st.write("**Manual workbook entry**")
+                st.caption(
+                    "Use this only after you verified the value in the linked document. "
+                    "The entry is written into `filled_quote_workbook.xlsx`."
+                )
+                inferred_tab = infer_workbook_tab(issue)
+                tab_name = st.selectbox(
+                    "Workbook tab",
+                    tuple(WORKBOOK_FIELD_ROWS),
+                    index=tuple(WORKBOOK_FIELD_ROWS).index(inferred_tab),
+                    key=f"{key_prefix}-manual-tab",
+                )
+                manual_columns = st.columns(3)
+                with manual_columns[0]:
+                    item_id_value = st.text_input(
+                        "Mark / door number",
+                        value=clean_issue_mark_for_workbook(issue.get("mark", "")),
+                        key=f"{key_prefix}-manual-id",
+                    )
+                with manual_columns[1]:
+                    field_name = st.selectbox(
+                        "Workbook field",
+                        tuple(WORKBOOK_FIELD_ROWS[tab_name]["fields"]),
+                        key=f"{key_prefix}-manual-field",
+                    )
+                with manual_columns[2]:
+                    overwrite_existing = st.checkbox(
+                        "Overwrite existing value",
+                        key=f"{key_prefix}-manual-overwrite",
+                    )
+                manual_value = st.text_input(
+                    "Verified value to port into Excel",
+                    key=f"{key_prefix}-manual-value",
+                )
+                if st.button(
+                    "Port verified value into Excel",
+                    disabled=not (
+                        item_id_value.strip()
+                        and field_name
+                        and manual_value.strip()
+                    ),
+                    key=f"{key_prefix}-manual-apply",
+                ):
+                    try:
+                        workbook_path, workbook_cell = apply_manual_workbook_entry(
+                            job_dir,
+                            tab_name,
+                            item_id_value,
+                            field_name,
+                            manual_value,
+                            overwrite_existing,
+                        )
+                    except (FileNotFoundError, ValueError, OSError) as exc:
+                        st.error(f"Could not port value into Excel: {exc}")
+                    else:
+                        review_state["issues"][current_issue_id] = {
+                            "status": "Resolved",
+                            "estimator_note": _join_note_parts(
+                                estimator_note,
+                                f"Manual workbook entry: {workbook_cell} = {manual_value.strip()}",
+                            ),
+                            "resolved_by": resolved_by.strip(),
+                            "resolution_date": resolution_date.strip()
+                            or datetime.now().date().isoformat(),
+                        }
+                        review_state.setdefault("manual_entries", []).append(
+                            {
+                                "issue_id": current_issue_id,
+                                "applied_at": datetime.now().isoformat(timespec="seconds"),
+                                "workbook_path": str(workbook_path.resolve()),
+                                "workbook_cell": workbook_cell,
+                                "value": manual_value.strip(),
+                                "estimator": resolved_by.strip(),
+                            }
+                        )
+                        review_state["approved_for_send"] = False
+                        review_state["approved_by"] = ""
+                        review_state["approved_at"] = ""
+                        save_review_state(job_dir, review_state)
+                        _write_job_zip(job_dir)
+                        st.success(f"Value ported into `{workbook_cell}` and issue marked Resolved.")
+                        st.rerun()
     else:
         st.success("No CRITICAL issues recorded.")
 

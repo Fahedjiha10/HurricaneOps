@@ -12,6 +12,7 @@ mkdir -p \
   "$HOME/Library/Mobile Documents/com~apple~CloudDocs/F&T Contruction/HurricaneOps Processed"
 
 rsync -a "$PROJECT_ROOT/05_SCRIPTS/" "$RUNTIME_DIR/05_SCRIPTS/"
+cp "$PROJECT_ROOT/app.py" "$RUNTIME_DIR/app.py"
 cp "$PROJECT_ROOT/requirements.txt" "$RUNTIME_DIR/requirements.txt"
 
 if [[ ! -x "$RUNTIME_DIR/.venv/bin/python" ]]; then

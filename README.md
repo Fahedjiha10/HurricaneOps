@@ -73,6 +73,12 @@ and finish stay blank unless explicitly extracted, and HurricaneOps adds QA
 review items for missing material/finish fields. Door `FRAME FINISH` is carried
 from the second value in combined `DOOR / FRAME` material cells such as
 `PAINTED WOOD, PAINTED WOOD`.
+The dashboard's Critical Issue Action Center links each critical item to its
+best matching copied PDF, CSV, workbook, or QA file. Estimators can record an
+accept/deny/RFI decision or enter a verified value that is written directly into
+the filled quote workbook. Workbook Count Check tables are regenerated for
+Windows, Storefronts, and Doors so each extracted mark or door number is counted
+against the generated unit columns.
 When an
 earlier completed job is selected, the dashboard offers a one-click action to
 create or refresh the organized downloads from its preserved source PDFs.

@@ -169,6 +169,10 @@ class ScheduleExtractorRowTests(unittest.TestCase):
             self.assertEqual(sheet["B12"].value, "BRONZE")
             self.assertEqual(sheet["B13"].value, "1.08")
             self.assertEqual(sheet["B14"].value, "0.45")
+            self.assertEqual(sheet["A19"].value, "Count Check")
+            self.assertEqual(sheet["A21"].value, "G01")
+            self.assertEqual(sheet["B21"].value, 1)
+            self.assertEqual(sheet["C21"].value, "=COUNTIF($B$4:$L$4,A21)")
             audit = (schedules_dir / "storefront_workbook_transfer_audit.json").read_text()
             self.assertIn('"passed": true', audit)
 
@@ -219,6 +223,10 @@ class ScheduleExtractorRowTests(unittest.TestCase):
             self.assertEqual(sheet["B4"].value, "101")
             self.assertEqual(sheet["B13"].value, "PAINTED WOOD")
             self.assertEqual(sheet["Z4"].value, "125")
+            self.assertEqual(sheet["A20"].value, "Count Check")
+            self.assertEqual(sheet["A22"].value, "101")
+            self.assertEqual(sheet["B22"].value, 1)
+            self.assertEqual(sheet["C22"].value, "=COUNTIF($B$4:$Z$4,A22)")
             self.assertIn("A1:Z1", [str(item) for item in sheet.merged_cells.ranges])
 
     def test_workbook_expands_and_reconciles_window_schedule(self) -> None:
@@ -264,4 +272,8 @@ class ScheduleExtractorRowTests(unittest.TestCase):
             self.assertEqual(sheet["B7"].value, "GLAZING SCHEDULE")
             self.assertEqual(sheet["B11"].value, "MR. GLASS, SERIES MG-350")
             self.assertEqual(sheet["B12"].value, "WHITE")
+            self.assertEqual(sheet["A20"].value, "Count Check")
+            self.assertEqual(sheet["A22"].value, "G01")
+            self.assertEqual(sheet["B22"].value, 1)
+            self.assertEqual(sheet["C22"].value, "=COUNTIF($B$6:$AE$6,A22)")
             self.assertIn("A1:AE1", [str(item) for item in sheet.merged_cells.ranges])
