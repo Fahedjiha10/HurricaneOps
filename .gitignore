@@ -1,0 +1,23 @@
+# Local Python environment
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local OS/editor files
+.DS_Store
+.idea/
+.vscode/
+
+# HurricaneOps local working data
+00_INBOX/*
+01_JOBS/*
+jobs_index.csv
+
+# Runtime/log artifacts
+*.log
+*.tmp
+.streamlit/secrets.toml
+
+# Generated archives and workbooks
+*.zip
+~$*.xlsx

@@ -1,0 +1,10 @@
+openpyxl
+opencv-python-headless
+pandas
+pdfplumber
+pymupdf
+pytesseract
+python-dateutil
+rapidfuzz
+streamlit
+tabulate
