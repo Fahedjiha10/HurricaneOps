@@ -92,6 +92,30 @@ class ScheduleExtractorRowTests(unittest.TestCase):
         self.assertEqual([row["mark"] for row in rows["storefronts"]], ["G02"])
         self.assertEqual([row["mark"] for row in rows["windows"]], ["G02"])
         self.assertEqual(rows["windows"][0]["panels"], "3")
+        self.assertEqual(rows["windows"][0]["glass_type"], "MR. GLASS")
+
+    def test_quote_adapter_splits_door_frame_finish_from_combined_material(self) -> None:
+        door = self.extractor._door_item_from_cells(
+            [
+                "101",
+                "GARAGE",
+                "1",
+                "2'-8\"",
+                "9'-0\"",
+                "1",
+                "",
+                "WOOD",
+                "SWING",
+                "PAINTED WOOD, PAINTED WOOD",
+            ],
+            "LEVEL 1",
+        )
+        rows = quote_rows_from_structured(
+            ExtractionResult(schedules=[DoorSchedule("160 NW 44 St", 1, [door])])
+        )["doors"]
+        self.assertEqual(rows[0]["door_material"], "PAINTED WOOD")
+        self.assertEqual(rows[0]["frame_material"], "WOOD")
+        self.assertEqual(rows[0]["frame_finish"], "PAINTED WOOD")
 
     def test_glazing_thermal_requirements_are_parsed_without_guessing(self) -> None:
         requirements = _parse_glazing_requirements(
@@ -110,7 +134,9 @@ class ScheduleExtractorRowTests(unittest.TestCase):
             "width": "6'-0\"",
             "height": "9'-0\"",
             "type": "SWING DOOR",
-            "material": "",
+            "material": "ALUMINUM",
+            "glass_type": "MR. GLASS, SERIES MG-3000",
+            "finish": "BRONZE",
             "noa": "FL 26942",
             "brand_product": "MR. GLASS, SERIES MG-3000",
             "level": "LEVEL 1",
@@ -138,6 +164,9 @@ class ScheduleExtractorRowTests(unittest.TestCase):
             sheet = workbook["Storefronts"]
             self.assertEqual(sheet["A1"].value, "STOREFRONT GLAZING PACKAGE - UNIT COLUMNS")
             self.assertEqual(sheet["B4"].value, "G01")
+            self.assertEqual(sheet["B10"].value, "ALUMINUM")
+            self.assertEqual(sheet["B11"].value, "MR. GLASS, SERIES MG-3000")
+            self.assertEqual(sheet["B12"].value, "BRONZE")
             self.assertEqual(sheet["B13"].value, "1.08")
             self.assertEqual(sheet["B14"].value, "0.45")
             audit = (schedules_dir / "storefront_workbook_transfer_audit.json").read_text()
@@ -157,7 +186,7 @@ class ScheduleExtractorRowTests(unittest.TestCase):
                     "door_material": "PAINTED WOOD",
                     "door_finish": "",
                     "frame_material": "WOOD",
-                    "frame_finish": "",
+                    "frame_finish": "PAINTED WOOD",
                     "fire_rating": "",
                     "noa": "",
                     "panic_hardware": "PRIVACY LOCK",
@@ -188,6 +217,7 @@ class ScheduleExtractorRowTests(unittest.TestCase):
             sheet = workbook["Doors"]
             self.assertEqual(sheet["A1"].value, "DOOR SCHEDULE - UNIT COLUMNS")
             self.assertEqual(sheet["B4"].value, "101")
+            self.assertEqual(sheet["B13"].value, "PAINTED WOOD")
             self.assertEqual(sheet["Z4"].value, "125")
             self.assertIn("A1:Z1", [str(item) for item in sheet.merged_cells.ranges])
 
@@ -202,7 +232,8 @@ class ScheduleExtractorRowTests(unittest.TestCase):
                     "height": "5'-0\"",
                     "type": "FIXED WINDOW",
                     "material": "",
-                    "color": "",
+                    "glass_type": "MR. GLASS, SERIES MG-350",
+                    "finish": "WHITE",
                     "noa": "FL 41889",
                     "brand_product": "MR. GLASS, SERIES MG-350",
                     "level": "LEVEL 1",
@@ -231,4 +262,6 @@ class ScheduleExtractorRowTests(unittest.TestCase):
             self.assertEqual(sheet["AE6"].value, "G30")
             self.assertEqual(sheet["B5"].value, "FIXED WINDOW")
             self.assertEqual(sheet["B7"].value, "GLAZING SCHEDULE")
+            self.assertEqual(sheet["B11"].value, "MR. GLASS, SERIES MG-350")
+            self.assertEqual(sheet["B12"].value, "WHITE")
             self.assertIn("A1:AE1", [str(item) for item in sheet.merged_cells.ranges])

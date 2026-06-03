@@ -69,16 +69,18 @@ def quote_rows_from_structured(result: ExtractionResult) -> dict[str, list[dict[
             if schedule.schedule_type == "glazing":
                 description = str(values["description"])
                 panel_match = re.search(r"\b(\d+)\s*[- ]?\s*PANEL\b", description.upper())
+                brand_product = str(values.get("brand_product") or "")
                 common = {
                     "mark": str(values["tag"]),
                     "quantity": str(values["count"]),
                     "width": str(values["width_raw"]),
                     "height": str(values["height_raw"]),
                     "type": description,
-                    "material": "",
-                    "color": "",
+                    "material": str(values.get("material") or ""),
+                    "glass_type": str(values.get("glass_type") or brand_product),
+                    "finish": str(values.get("finish") or ""),
                     "noa": str(values.get("noa") or ""),
-                    "brand_product": str(values.get("brand_product") or ""),
+                    "brand_product": brand_product,
                     "level": str(values.get("level") or ""),
                     "remarks": str(values.get("remarks") or ""),
                     "panels": panel_match.group(1) if panel_match else "",
@@ -92,6 +94,19 @@ def quote_rows_from_structured(result: ExtractionResult) -> dict[str, list[dict[
                 if "WINDOW" in description.upper():
                     windows.append(common.copy())
             elif schedule.schedule_type == "door":
+                material_parts = [
+                    part.strip()
+                    for part in str(values.get("material") or "").split(",")
+                    if part.strip()
+                ]
+                door_material = (
+                    material_parts[0] if material_parts else str(values.get("material") or "")
+                )
+                frame_finish = (
+                    material_parts[1]
+                    if len(material_parts) > 1
+                    else str(values.get("frame_finish") or "")
+                )
                 doors.append(
                     {
                         "door_no": str(values["door_number"]),
@@ -100,10 +115,10 @@ def quote_rows_from_structured(result: ExtractionResult) -> dict[str, list[dict[
                         "width": str(values["width_raw"]),
                         "height": str(values["height_raw"]),
                         "thickness": "",
-                        "door_material": str(values.get("material") or ""),
+                        "door_material": door_material,
                         "door_finish": "",
                         "frame_material": str(values.get("jamb") or ""),
-                        "frame_finish": "",
+                        "frame_finish": frame_finish,
                         "fire_rating": "",
                         "noa": "",
                         "panic_hardware": str(values.get("hardware") or ""),

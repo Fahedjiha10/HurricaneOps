@@ -67,6 +67,12 @@ The Storefronts worksheet is also reconciled after save through
 `storefront_workbook_transfer_audit.json`. Explicit schedule-level glazing
 requirements such as U-factor and SHGC are preserved in
 `glazing_thermal_requirements.json` and copied into the review workbook.
+Window and storefront `Glass TYPE` is carried from the schedule `Brand/Product`
+column when the drawings do not provide a separate glass-type column. Material
+and finish stay blank unless explicitly extracted, and HurricaneOps adds QA
+review items for missing material/finish fields. Door `FRAME FINISH` is carried
+from the second value in combined `DOOR / FRAME` material cells such as
+`PAINTED WOOD, PAINTED WOOD`.
 When an
 earlier completed job is selected, the dashboard offers a one-click action to
 create or refresh the organized downloads from its preserved source PDFs.

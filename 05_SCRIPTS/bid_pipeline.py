@@ -39,7 +39,8 @@ WINDOW_HEADERS = (
     "height",
     "type",
     "material",
-    "color",
+    "glass_type",
+    "finish",
     "noa",
     "brand_product",
     "level",
@@ -54,6 +55,8 @@ STOREFRONT_HEADERS = (
     "height",
     "type",
     "material",
+    "glass_type",
+    "finish",
     "noa",
     "brand_product",
     "level",
@@ -67,6 +70,9 @@ GLAZING_HEADERS = (
     "quantity",
     "width",
     "height",
+    "material",
+    "glass_type",
+    "finish",
     "remarks",
     "noa",
     "brand_product",
@@ -185,7 +191,8 @@ def _extract_windows(text: str, source: str) -> list[dict[str, str]]:
             "height": height,
             "type": window_type,
             "material": material,
-            "color": color,
+            "glass_type": "",
+            "finish": color,
             "noa": "",
             "brand_product": "",
             "level": "",
@@ -211,6 +218,8 @@ def _extract_storefronts(text: str, source: str) -> list[dict[str, str]]:
             "height": height,
             "type": storefront_type,
             "material": material,
+            "glass_type": "",
+            "finish": "",
             "noa": "",
             "brand_product": "",
             "level": "",
@@ -235,6 +244,13 @@ def _join_notes(*parts: str) -> str:
     return "; ".join(part.strip() for part in parts if part and part.strip())
 
 
+def _split_combined_door_frame_material(value: str) -> tuple[str, str]:
+    parts = [part.strip() for part in _clean_table_value(value).split(",") if part.strip()]
+    if len(parts) >= 2:
+        return parts[0], parts[1]
+    return _clean_table_value(value), ""
+
+
 def _empty_door_row() -> dict[str, str]:
     return {header: "" for header in DOOR_HEADERS}
 
@@ -245,6 +261,7 @@ def _door_table_row(
     if not values or not re.fullmatch(r"(?:\d{3}|G\d+)", values[0], flags=re.IGNORECASE):
         return None
     if len(values) >= 14 and values[2].isdigit():
+        door_material, frame_finish = _split_combined_door_frame_material(values[9])
         row = _empty_door_row()
         row.update(
             {
@@ -257,8 +274,8 @@ def _door_table_row(
                 "fixed_panels": values[6],
                 "frame_material": values[7],
                 "type": values[8],
-                "door_material": values[9],
-                "frame_finish": values[10],
+                "door_material": door_material,
+                "frame_finish": values[10] or frame_finish,
                 "panic_hardware": values[11],
                 "remarks": values[12],
                 "level": level,
@@ -343,6 +360,9 @@ def _glazing_row_from_values(
         "quantity": values[2],
         "width": _normalize_dimension(values[3]),
         "height": _normalize_dimension(values[4]),
+        "material": "",
+        "glass_type": values[7],
+        "finish": "",
         "remarks": values[5],
         "noa": values[6],
         "brand_product": values[7],
@@ -384,6 +404,9 @@ def _glazing_rows_from_text(text: str, source: str) -> list[dict[str, str]]:
                 "quantity": quantity,
                 "width": width,
                 "height": height,
+                "material": "",
+                "glass_type": brand_product,
+                "finish": "",
                 "remarks": remarks,
                 "noa": noa,
                 "brand_product": brand_product,
@@ -429,8 +452,9 @@ def _window_from_glazing(row: dict[str, str]) -> dict[str, str]:
         "width": row["width"],
         "height": row["height"],
         "type": row["description"],
-        "material": "",
-        "color": "",
+        "material": row.get("material", ""),
+        "glass_type": row.get("glass_type") or row.get("brand_product", ""),
+        "finish": row.get("finish", ""),
         "noa": row["noa"],
         "brand_product": row["brand_product"],
         "level": row["level"],
@@ -441,9 +465,7 @@ def _window_from_glazing(row: dict[str, str]) -> dict[str, str]:
 
 
 def _storefront_from_glazing(row: dict[str, str]) -> dict[str, str]:
-    window = _window_from_glazing(row)
-    window.pop("color")
-    return window
+    return _window_from_glazing(row)
 
 
 def _door_from_glazing(row: dict[str, str]) -> dict[str, str]:
@@ -673,10 +695,27 @@ def _candidate_notes(row: dict[str, str]) -> str:
     )
 
 
+def _missing_source_field_note(
+    row: dict[str, str], fields: tuple[tuple[str, str], ...]
+) -> str:
+    missing = [label for label, field in fields if not row.get(field)]
+    if not missing:
+        return ""
+    return f"Missing explicit source fields: {', '.join(missing)}"
+
+
 def _window_notes(row: dict[str, str]) -> str:
     return _join_notes(
         _candidate_notes(row),
         f"Panels: {row['panels']}" if row.get("panels") else "",
+        _missing_source_field_note(
+            row,
+            (
+                ("Material", "material"),
+                ("Glass Type", "glass_type"),
+                ("Frame Finish", "finish"),
+            ),
+        ),
         f"Source: {row['source']}" if row.get("source") else "",
     )
 
@@ -684,6 +723,14 @@ def _window_notes(row: dict[str, str]) -> str:
 def _storefront_notes(row: dict[str, str]) -> str:
     return _join_notes(
         _candidate_notes(row),
+        _missing_source_field_note(
+            row,
+            (
+                ("Material", "material"),
+                ("Glass Type", "glass_type"),
+                ("Finish", "finish"),
+            ),
+        ),
         f"Source: {row['source']}" if row.get("source") else "",
     )
 
@@ -705,14 +752,14 @@ def _workbook_capacity_issues(
             "window",
             windows,
             workbook["Windows"],
-            (5, 6, 7, 8, 9, 10, 12, 17),
+            (5, 6, 7, 8, 9, 10, 11, 12, 17),
             True,
         ),
         (
             "glazing / storefront",
             storefronts,
             workbook["Storefronts"],
-            (4, 5, 6, 7, 8, 9, 10, 16),
+            (4, 5, 6, 7, 8, 9, 10, 11, 12, 16),
             True,
         ),
         (
@@ -825,6 +872,68 @@ def _structured_extraction_issues(
     return issues
 
 
+def _missing_workbook_attribute_issues(
+    windows: list[dict[str, str]],
+    storefronts: list[dict[str, str]],
+    doors: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    groups = (
+        (
+            "Window",
+            windows,
+            (
+                ("Material", "material"),
+                ("Glass Type", "glass_type"),
+                ("Frame Finish", "finish"),
+            ),
+            "Windows worksheet rows 10-12",
+        ),
+        (
+            "Storefront",
+            storefronts,
+            (
+                ("Material", "material"),
+                ("Glass Type", "glass_type"),
+                ("Finish", "finish"),
+            ),
+            "Storefronts worksheet rows 10-12",
+        ),
+        (
+            "Door",
+            _quote_door_rows(doors),
+            (("Frame Finish Color", "frame_finish"),),
+            "Doors worksheet row 13",
+        ),
+    )
+    issues: list[dict[str, str]] = []
+    for label, rows, fields, source_page in groups:
+        missing_counts = {
+            field_label: sum(1 for row in rows if not row.get(field_name))
+            for field_label, field_name in fields
+        }
+        missing_counts = {
+            field_label: count
+            for field_label, count in missing_counts.items()
+            if count
+        }
+        if not missing_counts:
+            continue
+        missing_summary = ", ".join(
+            f"{field_label}: {count}" for field_label, count in missing_counts.items()
+        )
+        issues.append(
+            {
+                "severity": "HIGH",
+                "issue_type": f"{label} finish/material review required",
+                "mark": f"{len(rows)} {label.lower()} rows",
+                "source_page": source_page,
+                "description": f"Some {label.lower()} quote rows do not have explicit source values for required finish/material attributes ({missing_summary}).",
+                "recommended_action": "Review the source schedule and template requirements; enter only verified material, glass type, finish, or frame-finish color values before pricing.",
+            }
+        )
+    return issues
+
+
 def _write_door_workbook_transfer_audit(
     draft_path: Path, doors: list[dict[str, str]]
 ) -> Path:
@@ -920,7 +1029,8 @@ def _write_window_workbook_transfer_audit(
         "width": 8,
         "height": 9,
         "material": 10,
-        "color": 12,
+        "glass_type": 11,
+        "finish": 12,
     }
     mismatches: list[dict[str, str]] = []
     audit_rows: list[dict[str, object]] = []
@@ -1020,6 +1130,8 @@ def _write_storefront_workbook_transfer_audit(
         "width": 8,
         "height": 9,
         "material": 10,
+        "glass_type": 11,
+        "finish": 12,
     }
     mismatches: list[dict[str, str]] = []
     audit_rows: list[dict[str, object]] = []
@@ -1115,7 +1227,7 @@ def _create_workbook_draft(
 
     windows_sheet = workbook["Windows"]
     window_columns = _ensure_workbook_columns(
-        windows_sheet, (5, 6, 7, 8, 9, 10, 12, 17), len(windows)
+        windows_sheet, (5, 6, 7, 8, 9, 10, 11, 12, 17), len(windows)
     )
     for column, row in zip(window_columns, windows):
         _set_blank(windows_sheet, f"{column}5", row["type"])
@@ -1124,7 +1236,8 @@ def _create_workbook_draft(
         _set_blank(windows_sheet, f"{column}8", row["width"])
         _set_blank(windows_sheet, f"{column}9", row["height"])
         _set_blank(windows_sheet, f"{column}10", row["material"])
-        _set_blank(windows_sheet, f"{column}12", row["color"])
+        _set_blank(windows_sheet, f"{column}11", row.get("glass_type", ""))
+        _set_blank(windows_sheet, f"{column}12", row.get("finish", ""))
         _set_blank(windows_sheet, f"{column}14", glazing_requirements.get("u_factor", ""))
         _set_blank(windows_sheet, f"{column}15", glazing_requirements.get("shgc", ""))
         _set_blank(windows_sheet, f"{column}17", _window_notes(row))
@@ -1132,7 +1245,7 @@ def _create_workbook_draft(
     storefronts_sheet = workbook["Storefronts"]
     storefronts_sheet["A1"] = "STOREFRONT GLAZING PACKAGE - UNIT COLUMNS"
     storefront_columns = _ensure_workbook_columns(
-        storefronts_sheet, (4, 5, 6, 7, 8, 9, 10, 16), len(storefronts)
+        storefronts_sheet, (4, 5, 6, 7, 8, 9, 10, 11, 12, 16), len(storefronts)
     )
     for column, row in zip(storefront_columns, storefronts):
         _set_blank(storefronts_sheet, f"{column}4", row["mark"])
@@ -1142,6 +1255,8 @@ def _create_workbook_draft(
         _set_blank(storefronts_sheet, f"{column}8", row["width"])
         _set_blank(storefronts_sheet, f"{column}9", row["height"])
         _set_blank(storefronts_sheet, f"{column}10", row["material"])
+        _set_blank(storefronts_sheet, f"{column}11", row.get("glass_type", ""))
+        _set_blank(storefronts_sheet, f"{column}12", row.get("finish", ""))
         _set_blank(storefronts_sheet, f"{column}13", glazing_requirements.get("u_factor", ""))
         _set_blank(storefronts_sheet, f"{column}14", glazing_requirements.get("shgc", ""))
         _set_blank(storefronts_sheet, f"{column}16", _storefront_notes(row))
@@ -1172,6 +1287,9 @@ def _create_workbook_draft(
             f"Fixed panels: {row['fixed_panels']}" if row.get("fixed_panels") else "",
             f"Hardware: {row['panic_hardware']}" if row.get("panic_hardware") else "",
             f"Details: {row['raw_text']}" if row.get("raw_text") else "",
+            "Missing explicit source field: Frame Finish Color"
+            if not row.get("frame_finish")
+            else "",
             f"Source: {row['source']}",
         )
         _set_blank(doors_sheet, f"{column}17", door_notes)
@@ -1189,6 +1307,9 @@ def _create_workbook_draft(
     review.append([])
     review.append(["Notes"])
     review.append(["Only fields explicitly present in extracted drawing tables were filled."])
+    review.append(["Window and storefront Glass TYPE is populated from the schedule Brand/Product column when no separate glass-type column is present."])
+    review.append(["Window/storefront Material and Finish remain blank unless explicitly extracted; missing values are listed in QA and item notes."])
+    review.append(["Door FRAME FINISH is populated from the second value in combined DOOR / FRAME material cells when available."])
     review.append(["The project-specific storefront glazing package was kept together in drawing order on the Storefronts worksheet."])
     review.append(["Window-only glazing candidates were mapped to the Windows worksheet and reconciled after save."])
     review.append(["Architectural and garage-door schedule candidates were mapped in drawing order without overwriting populated cells."])
@@ -1365,6 +1486,8 @@ def _write_reports(
             "## Manual Review Notes",
             "- Numeric PSF values and opening-to-zone assignments were not present in the extracted text.",
             "- Window and storefront quantities were not guessed.",
+            "- Window and storefront material, glass type, and finish must be reviewed against the source schedule.",
+            "- Door frame-finish color must be reviewed before pricing.",
             "- Door candidates remain separate by door number, dimensions, material, rating, and notes.",
             "- Review the original schedule sheets before pricing or issuing a proposal.",
             "",
@@ -1402,6 +1525,7 @@ def _write_reports(
         "",
         "Required review items:",
         "- Confirm window, storefront, and exterior door quantities.",
+        "- Confirm window/storefront material, glass type, finish, and door frame-finish color.",
         "- Confirm pressure-zone assignments and numeric PSF values.",
         "- Review expired NOA entries and select current approved products.",
         "- Review schedule CSVs against the indexed original pages listed in sheet_index.csv.",
@@ -1783,6 +1907,11 @@ def run_bid_pipeline(
             zones,
         ),
         *_structured_extraction_issues(schedule_pages, structured_result),
+        *_missing_workbook_attribute_issues(
+            structured_quote_rows["windows"],
+            structured_quote_rows["storefronts"],
+            structured_quote_rows["doors"],
+        ),
     ]
     if structured_quote_rows["storefronts"] and not storefront_pages:
         extra_qa_issues.append(
