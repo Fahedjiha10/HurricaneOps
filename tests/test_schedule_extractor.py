@@ -117,6 +117,80 @@ class ScheduleExtractorRowTests(unittest.TestCase):
         self.assertEqual(rows[0]["frame_material"], "WOOD")
         self.assertEqual(rows[0]["frame_finish"], "PAINTED WOOD")
 
+    def test_shifted_architectural_door_schedule_row_exports_key_fields(self) -> None:
+        door = self.extractor._door_item_from_cells(
+            [
+                "",
+                "001",
+                "10'-0\"",
+                "10'-0\"",
+                "3\"",
+                "D",
+                "METAL",
+                "PNT",
+                "**",
+                "",
+                "METAL",
+                "BAY ENTRANCE N",
+                "OA No. 20-0417.04",
+            ],
+            None,
+        )
+        self.assertIsNotNone(door)
+        self.assertEqual(door.door_number, "001")
+        self.assertEqual(door.location, "BAY ENTRANCE")
+        self.assertEqual(door.width_inches, 120.0)
+        self.assertEqual(door.height_inches, 120.0)
+        self.assertEqual(door.thickness, "3\"")
+        self.assertEqual(door.jamb, "METAL")
+        self.assertEqual(door.frame_finish, "PNT")
+        self.assertEqual(door.noa, "NOA No. 20-0417.04")
+        self.assertGreaterEqual(door.confidence, 0.85)
+
+        rows = quote_rows_from_structured(
+            ExtractionResult(schedules=[DoorSchedule("215 NW 63rd St", 1, [door])])
+        )["doors"]
+        self.assertEqual(rows[0]["door_no"], "001")
+        self.assertEqual(rows[0]["location"], "BAY ENTRANCE")
+        self.assertEqual(rows[0]["thickness"], "3\"")
+        self.assertEqual(rows[0]["door_material"], "METAL")
+        self.assertEqual(rows[0]["frame_material"], "METAL")
+        self.assertEqual(rows[0]["frame_finish"], "PNT")
+        self.assertEqual(rows[0]["noa"], "NOA No. 20-0417.04")
+        self.assertEqual(rows[0]["remarks"], "")
+
+    def test_multiline_architectural_door_rows_split_before_parsing(self) -> None:
+        result = self.extractor._extract_table_rows(
+            [
+                [
+                    [
+                        "",
+                        "021\n022",
+                        "10'-0\"\n3'-0\"",
+                        "10'-0\"\n8'-6\"",
+                        "3\"\n1 3/4\"",
+                        "D\nC",
+                        "METAL\nALUM.",
+                        "PNT\nPNT",
+                        "**\n**",
+                        "",
+                        "METAL\nALUM.",
+                        "BAY ENTRANCE N\nBAY ENTRANCE F",
+                        "OA No. 20-0417.04\nLPA # FL15712-R3",
+                    ]
+                ]
+            ],
+            "",
+            Path("A-8-01-DOOR-SCHEDULES.pdf"),
+            1,
+            "pdfplumber",
+        )
+        rows = quote_rows_from_structured(result)["doors"]
+        self.assertEqual([row["door_no"] for row in rows], ["021", "022"])
+        self.assertEqual(rows[0]["frame_material"], "METAL")
+        self.assertEqual(rows[1]["frame_material"], "ALUM.")
+        self.assertEqual(rows[1]["noa"], "FLPA # FL15712-R3")
+
     def test_glazing_thermal_requirements_are_parsed_without_guessing(self) -> None:
         requirements = _parse_glazing_requirements(
             "Glazing min. thermal standards: U-Factor = 1.08, SHGC = 0.45",

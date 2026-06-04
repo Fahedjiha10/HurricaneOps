@@ -814,6 +814,10 @@ def _quote_door_rows(doors: list[dict[str, str]]) -> list[dict[str, str]]:
     return [row for row in doors if row.get("scope") in quote_scopes]
 
 
+def _door_requires_manual_parsing(row: dict[str, str]) -> bool:
+    return row.get("extraction_status", "").upper().startswith("REVIEW")
+
+
 def _workbook_capacity_issues(
     template_path: Path,
     windows: list[dict[str, str]],
@@ -1462,9 +1466,7 @@ def _write_reports(
         for row in noas
         if row["status"].startswith("CRITICAL")
     )
-    raw_door_count = sum(
-        not row["extraction_status"].startswith("TABLE PARSED") for row in doors
-    )
+    raw_door_count = sum(_door_requires_manual_parsing(row) for row in doors)
     if raw_door_count:
         qa_issues.append(
             {
@@ -1717,9 +1719,7 @@ def _write_pipeline_summary(
     notes: str,
     municipality_lookup: dict[str, object],
 ) -> Path:
-    raw_door_count = sum(
-        not row["extraction_status"].startswith("TABLE PARSED") for row in doors
-    )
+    raw_door_count = sum(_door_requires_manual_parsing(row) for row in doors)
     organized_source_counts = _organized_source_counts(job_dir)
     issue_counts = {
         severity: sum(issue["severity"] == severity for issue in qa_issues)
@@ -1930,7 +1930,8 @@ def run_bid_pipeline(
         GLAZING_HEADERS[:-1],
     )
     windows = _dedupe_rows(
-        [
+        structured_quote_rows["windows"]
+        + [
             row
             for pdf_path in schedule_pages
             for row in _extract_windows(_extract_text(pdf_path), pdf_path.name)
@@ -1956,8 +1957,18 @@ def run_bid_pipeline(
         ],
         STOREFRONT_HEADERS[:-1],
     )
+    structured_door_numbers = {
+        row["door_no"] for row in structured_quote_rows["doors"] if row.get("door_no")
+    }
+    legacy_door_rows = [
+        row
+        for pdf_path in door_pages
+        for row in _extract_doors(pdf_path)
+        if row.get("door_no") not in structured_door_numbers
+    ]
     doors = _dedupe_rows(
-        [row for pdf_path in door_pages for row in _extract_doors(pdf_path)]
+        structured_quote_rows["doors"]
+        + legacy_door_rows
         + [
             _door_from_glazing(row)
             for row in glazing_rows

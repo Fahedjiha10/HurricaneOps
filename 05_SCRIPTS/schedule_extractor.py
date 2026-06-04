@@ -32,6 +32,10 @@ GLAZING_TAG_RE = re.compile(r"^[A-Z]+\d+[A-Z]?$", flags=re.IGNORECASE)
 DOOR_NUMBER_RE = re.compile(r"^\d{2,5}$")
 LEVEL_RE = re.compile(r"\bLEVEL\s+\d+\b", flags=re.IGNORECASE)
 DIMENSION_TEXT_RE = r"""\d+\s*'\s*-\s*\d+(?:\s+\d+\s*/\s*\d+)?\s*" """
+NOA_TEXT_RE = re.compile(
+    r"\b(?:NOA\s*(?:No\.)?\s*[\d.-]+|FLPA\s*#\s*FL[\dA-Z.-]+|FL\s*\d[\dA-Z.-]*)\b",
+    flags=re.IGNORECASE,
+)
 
 
 def _clean(value: Any) -> str:
@@ -52,6 +56,60 @@ def _repair_split_fraction(value: str) -> str:
     """Repair PDF table cells that split 11/16 into `11"` and `16` lines."""
     cleaned = _clean(value)
     return re.sub(r'(\d+)"\s+(\d+)$', r'\1/\2"', cleaned)
+
+
+def _looks_like_dimension(value: str) -> bool:
+    return parse_architectural_dimension(_repair_split_fraction(value)) is not None
+
+
+def _door_cells_starting_at_identifier(values: list[str]) -> list[str]:
+    for index, value in enumerate(values[:3]):
+        if DOOR_NUMBER_RE.fullmatch(value):
+            return values[index:]
+    return values
+
+
+def _repair_architectural_door_location(
+    location: str, remarks: str
+) -> tuple[str, str]:
+    repaired_location = _clean(location)
+    repaired_remarks = _clean(remarks)
+    if '"' in repaired_location:
+        location_part, remark_part = repaired_location.split('"', 1)
+        repaired_location = _clean(location_part)
+        repaired_remarks = _clean(f'"{remark_part} {repaired_remarks}')
+    if repaired_location.endswith("N") and repaired_remarks.upper().startswith("OA "):
+        repaired_location = repaired_location[:-1].strip()
+        repaired_remarks = f"N{repaired_remarks}"
+    elif repaired_location.endswith("F") and repaired_remarks.upper().startswith("LPA "):
+        repaired_location = repaired_location[:-1].strip()
+        repaired_remarks = f"F{repaired_remarks}"
+    return repaired_location, repaired_remarks
+
+
+def _noa_from_text(value: str) -> str | None:
+    match = NOA_TEXT_RE.search(value)
+    return _clean(match.group()) if match else None
+
+
+def _expand_multiline_cells(values: list[str]) -> list[list[str]]:
+    split_cells = [value.splitlines() if "\n" in value else [value] for value in values]
+    row_count = max((len(parts) for parts in split_cells), default=1)
+    if row_count <= 1:
+        return [values]
+    expanded: list[list[str]] = []
+    for row_index in range(row_count):
+        expanded.append(
+            [
+                _clean(parts[row_index])
+                if len(parts) == row_count
+                else _clean(parts[0])
+                if len(parts) == 1
+                else _clean(" ".join(parts))
+                for parts in split_cells
+            ]
+        )
+    return expanded
 
 
 class ScheduleExtractor:
@@ -152,41 +210,42 @@ class ScheduleExtractor:
         for table_index, table in enumerate(tables):
             level: str | None = None
             for row_index, raw_row in enumerate(table):
-                values = [_clean(value) for value in raw_row]
-                row_text = " ".join(value for value in values if value)
-                level_match = LEVEL_RE.search(row_text)
-                if level_match and len([value for value in values if value]) <= 2:
-                    level = level_match.group().upper()
-                    continue
-                glazing_item = self._glazing_item_from_cells(values, level)
-                if glazing_item:
-                    glazing_items.append(glazing_item)
-                    self._audit(
-                        "structured_row",
-                        source_file,
-                        source_page=source_page,
-                        method=method,
-                        table_index=table_index,
-                        row_index=row_index,
-                        schedule_type="glazing",
-                        raw_cells=values,
-                        confidence=glazing_item.confidence,
-                    )
-                    continue
-                door_item = self._door_item_from_cells(values, level)
-                if door_item:
-                    door_items.append(door_item)
-                    self._audit(
-                        "structured_row",
-                        source_file,
-                        source_page=source_page,
-                        method=method,
-                        table_index=table_index,
-                        row_index=row_index,
-                        schedule_type="door",
-                        raw_cells=values,
-                        confidence=door_item.confidence,
-                    )
+                raw_values = ["" if value is None else str(value).strip() for value in raw_row]
+                for values in _expand_multiline_cells(raw_values):
+                    row_text = " ".join(value for value in values if value)
+                    level_match = LEVEL_RE.search(row_text)
+                    if level_match and len([value for value in values if value]) <= 2:
+                        level = level_match.group().upper()
+                        continue
+                    glazing_item = self._glazing_item_from_cells(values, level)
+                    if glazing_item:
+                        glazing_items.append(glazing_item)
+                        self._audit(
+                            "structured_row",
+                            source_file,
+                            source_page=source_page,
+                            method=method,
+                            table_index=table_index,
+                            row_index=row_index,
+                            schedule_type="glazing",
+                            raw_cells=values,
+                            confidence=glazing_item.confidence,
+                        )
+                        continue
+                    door_item = self._door_item_from_cells(values, level)
+                    if door_item:
+                        door_items.append(door_item)
+                        self._audit(
+                            "structured_row",
+                            source_file,
+                            source_page=source_page,
+                            method=method,
+                            table_index=table_index,
+                            row_index=row_index,
+                            schedule_type="door",
+                            raw_cells=values,
+                            confidence=door_item.confidence,
+                        )
         for item in self._garage_door_items_from_text(page_text):
             door_items.append(item)
             self._audit(
@@ -313,6 +372,51 @@ class ScheduleExtractor:
     def _door_item_from_cells(
         self, values: list[str], level: str | None
     ) -> DoorItem | None:
+        values = _door_cells_starting_at_identifier(values)
+        if (
+            len(values) >= 10
+            and DOOR_NUMBER_RE.fullmatch(values[0])
+            and _looks_like_dimension(values[1])
+            and _looks_like_dimension(values[2])
+        ):
+            width_raw = _repair_split_fraction(values[1])
+            height_raw = _repair_split_fraction(values[2])
+            door_material = values[5] if len(values) > 5 and values[5] else None
+            door_finish = values[6] if len(values) > 6 and values[6] else None
+            frame_material = values[9] if len(values) > 9 and values[9] else None
+            location, remarks = _repair_architectural_door_location(
+                values[10] if len(values) > 10 else "",
+                values[11] if len(values) > 11 else "",
+            )
+            material = ", ".join(
+                part for part in (door_material, door_finish) if part
+            ) or None
+            row = {
+                "level": level,
+                "door_number": values[0],
+                "location": location,
+                "quantity": 1,
+                "width_raw": width_raw,
+                "height_raw": height_raw,
+                "width_inches": parse_architectural_dimension(width_raw),
+                "height_inches": parse_architectural_dimension(height_raw),
+                "panels": None,
+                "fixed_panels": None,
+                "jamb": frame_material,
+                "type": values[4] if len(values) > 4 and values[4] else None,
+                "material": material,
+                "hardware": None,
+                "remarks": remarks or None,
+                "thickness": values[3] if len(values) > 3 and values[3] else None,
+                "frame_finish": door_finish,
+                "noa": _noa_from_text(remarks),
+            }
+            warnings = validate_door_row(row)
+            confidence = confidence_score(row, warnings, "door_number")
+            row["warnings"] = add_human_review_warning(confidence, warnings)
+            row["confidence"] = confidence
+            return DoorItem(**row)
+
         if len(values) < 9 or not DOOR_NUMBER_RE.fullmatch(values[0]):
             return None
         row = {
@@ -331,6 +435,9 @@ class ScheduleExtractor:
             "material": values[9] if len(values) > 9 and values[9] else None,
             "hardware": values[11] if len(values) > 11 and values[11] else None,
             "remarks": values[12] if len(values) > 12 and values[12] else None,
+            "thickness": None,
+            "frame_finish": None,
+            "noa": _noa_from_text(" ".join(values[9:])),
         }
         warnings = validate_door_row(row)
         confidence = confidence_score(row, warnings, "door_number")

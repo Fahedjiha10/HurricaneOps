@@ -44,6 +44,9 @@ class DoorItem:
     remarks: str | None
     confidence: float
     warnings: list[str] = field(default_factory=list)
+    thickness: str | None = None
+    frame_finish: str | None = None
+    noa: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

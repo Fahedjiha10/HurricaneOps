@@ -107,6 +107,10 @@ def quote_rows_from_structured(result: ExtractionResult) -> dict[str, list[dict[
                     if len(material_parts) > 1
                     else str(values.get("frame_finish") or "")
                 )
+                noa = str(values.get("noa") or "")
+                remarks = str(values.get("remarks") or "")
+                if noa and remarks.upper() == noa.upper():
+                    remarks = ""
                 doors.append(
                     {
                         "door_no": str(values["door_number"]),
@@ -114,15 +118,15 @@ def quote_rows_from_structured(result: ExtractionResult) -> dict[str, list[dict[
                         "type": str(values.get("type") or ""),
                         "width": str(values["width_raw"]),
                         "height": str(values["height_raw"]),
-                        "thickness": "",
+                        "thickness": str(values.get("thickness") or ""),
                         "door_material": door_material,
                         "door_finish": "",
                         "frame_material": str(values.get("jamb") or ""),
                         "frame_finish": frame_finish,
                         "fire_rating": "",
-                        "noa": "",
+                        "noa": noa,
                         "panic_hardware": str(values.get("hardware") or ""),
-                        "remarks": str(values.get("remarks") or ""),
+                        "remarks": remarks,
                         "level": str(values.get("level") or ""),
                         "quantity": str(values["quantity"]),
                         "panels": str(values.get("panels") or ""),
