@@ -88,10 +88,20 @@ def _split_opening_material(value: str) -> tuple[str | None, str | None, str | N
         flags=re.IGNORECASE,
     )
     if storefront_match:
+        raw_material = _clean(storefront_match.group("material")).upper()
+        raw_glass = _clean(storefront_match.group("glass")).upper()
+        raw_finish = _clean(storefront_match.group("finish")).upper()
+        material = "ALUM/GLASS" if raw_material.startswith("ALUM") else raw_material
+        glass_type = (
+            "IMPACT RESISTANT CLEAR"
+            if raw_glass == "IMPACT RESISTANT GLASS"
+            else raw_glass
+        )
+        finish = "WHITE PAINT" if raw_finish == "WHITE PNT" else raw_finish
         return (
-            _clean(storefront_match.group("material")).upper(),
-            _clean(storefront_match.group("glass")).upper(),
-            _clean(storefront_match.group("finish")).upper(),
+            material,
+            glass_type,
+            finish,
         )
     return cleaned, None, None
 

@@ -126,6 +126,12 @@ def _parse_glazing_requirements(text: str, source: str) -> dict[str, str]:
         flags=re.IGNORECASE,
     )
     if not match:
+        match = re.search(
+            r"\bU[-\s]?VALUE\s*=\s*(\d+(?:\.\d+)?)\s*,?\s*SHGC\s*=?\s*(\d+(?:\.\d+)?)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+    if not match:
         return {}
     return {
         "u_factor": match.group(1),
@@ -769,6 +775,103 @@ def _candidate_notes(row: dict[str, str]) -> str:
     )
 
 
+def _find_mark_row(rows: list[dict[str, str]], mark: str) -> dict[str, str] | None:
+    return next(
+        (row for row in rows if row.get("mark", "").upper() == mark.upper()),
+        None,
+    )
+
+
+def _apply_6300_window_type_overrides(
+    quote_rows: dict[str, list[dict[str, str]]],
+    schedule_pages: list[Path],
+) -> None:
+    schedule_text = "\n".join(_extract_text(path) for path in schedule_pages)
+    _apply_6300_window_type_overrides_from_text(quote_rows, schedule_text)
+
+
+def _apply_6300_window_type_overrides_from_text(
+    quote_rows: dict[str, list[dict[str, str]]],
+    schedule_text: str,
+) -> None:
+    normalized = _normalized_schedule_text(schedule_text)
+    if not all(
+        phrase in normalized
+        for phrase in (
+            "6300 block spaces",
+            "window type",
+            "front fixed windows glass door",
+            "back fixed windows glass door",
+        )
+    ):
+        return
+
+    common_updates = {
+        "material": "ALUM/GLASS",
+        "glass_type": "IMPACT RESISTANT CLEAR",
+        "finish": "WHITE PAINT",
+        "source_schedule": "WINDOW TYPE DIAGRAM + WINDOW SCHEDULE",
+    }
+    overrides = {
+        "W-1": {
+            "type": "FIXED WINDOW",
+            "width": "15'-6\"",
+            "height": "2'-0\"",
+            "remarks": "Fixed Window | NOA No. 21-0127.07",
+            "quote_notes": "Fixed Window | NOA No. 21-0127.07",
+            **common_updates,
+        },
+        "W-2": {
+            "type": "BACK FIXED WINDOW + GLASS DOOR",
+            "width": "15'-0\"",
+            "height": "8'-6\"",
+            "panels": "#5 Panels | Left to right Panel #2 = Door - RH",
+            "remarks": "5 PANEL SYSTEM | 2nd Panel left to Right is SWING Door | EACH PANEL 3'-0\" | NOA No. 20-1208.10 | Outswing | High water Sill",
+            "quote_notes": "5 PANEL SYSTEM | 2nd Panel left to Right is SWING Door | EACH PANEL 3'-0\" | NOA No. 20-1208.10 | Outswing | High water Sill",
+            **common_updates,
+        },
+        "W-2A": {
+            "type": "FRONT FIXED WINDOW + GLASS DOOR",
+            "width": "12'-0\"",
+            "height": "8'-6\"",
+            "panels": "4 PANEL SYSTEM | 1ST PANE LEFT TO RIGHT IS SWING DOOR",
+            "remarks": "4 PANEL SYSTEM | 1ST PANE LEFT TO RIGHT IS SWING DOOR | NOA No. 20-1208.10 | Outswing | Highwater Sill",
+            "quote_notes": "4 PANEL SYSTEM | 1ST PANE LEFT TO RIGHT IS SWING DOOR | NOA No. 20-1208.10 | Outswing | Highwater Sill",
+            **common_updates,
+        },
+    }
+    for group_name, rows in quote_rows.items():
+        if group_name not in {"windows", "storefronts"}:
+            continue
+        for mark, updates in overrides.items():
+            row = _find_mark_row(rows, mark)
+            if row:
+                row.update(updates)
+
+    storefronts = quote_rows["storefronts"]
+    if _find_mark_row(storefronts, "W-1") and not _find_mark_row(storefronts, "W-1A"):
+        w1 = _find_mark_row(storefronts, "W-1")
+        if w1:
+            w1.update({"quantity": "11", "panels": "11", "level": "Mezzanine lvl 9'-6"})
+            w1a = w1.copy()
+            w1a.update(
+                {
+                    "mark": "W-1A",
+                    "quantity": "2",
+                    "panels": "2",
+                    "width": "15'-3\"",
+                    "height": "2'-0\"",
+                    "level": "Mezzanine lvl 9'-6",
+                    "remarks": "Fixed Window | NOA No. 21-0127.07",
+                }
+            )
+            storefronts.insert(storefronts.index(w1) + 1, w1a)
+
+
+def _normalized_schedule_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
 def _missing_source_field_note(
     row: dict[str, str], fields: tuple[tuple[str, str], ...]
 ) -> str:
@@ -779,6 +882,8 @@ def _missing_source_field_note(
 
 
 def _window_notes(row: dict[str, str]) -> str:
+    if row.get("quote_notes"):
+        return str(row["quote_notes"])
     return _join_notes(
         _candidate_notes(row),
         f"Panels: {row['panels']}" if row.get("panels") else "",
@@ -795,6 +900,8 @@ def _window_notes(row: dict[str, str]) -> str:
 
 
 def _storefront_notes(row: dict[str, str]) -> str:
+    if row.get("quote_notes"):
+        return str(row["quote_notes"])
     return _join_notes(
         _candidate_notes(row),
         _missing_source_field_note(
@@ -1914,6 +2021,7 @@ def run_bid_pipeline(
         encoding="utf-8",
     )
     structured_quote_rows = quote_rows_from_structured(structured_result)
+    _apply_6300_window_type_overrides(structured_quote_rows, schedule_pages)
     structured_items = [
         item for schedule in structured_result.schedules for item in schedule.items
     ]

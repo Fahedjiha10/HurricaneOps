@@ -11,7 +11,11 @@ from openpyxl import load_workbook
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "05_SCRIPTS"))
 
 from schedule_extractor import ScheduleExtractor
-from bid_pipeline import _create_workbook_draft, _parse_glazing_requirements
+from bid_pipeline import (
+    _apply_6300_window_type_overrides_from_text,
+    _create_workbook_draft,
+    _parse_glazing_requirements,
+)
 from export_quote import quote_rows_from_structured
 from schemas import DoorSchedule, ExtractionResult, GlazingSchedule
 
@@ -143,9 +147,9 @@ class ScheduleExtractorRowTests(unittest.TestCase):
         self.assertEqual(item.tag, "W-1")
         self.assertEqual(item.width_inches, 24.0)
         self.assertEqual(item.height_inches, 186.0)
-        self.assertEqual(item.material, "ALUMN")
-        self.assertEqual(item.glass_type, "IMPACT RESISTANT GLASS")
-        self.assertEqual(item.finish, "WHITE PNT")
+        self.assertEqual(item.material, "ALUM/GLASS")
+        self.assertEqual(item.glass_type, "IMPACT RESISTANT CLEAR")
+        self.assertEqual(item.finish, "WHITE PAINT")
         self.assertEqual(item.noa, "NOA No. 21-0127.07")
         self.assertGreaterEqual(item.confidence, 0.85)
 
@@ -154,9 +158,9 @@ class ScheduleExtractorRowTests(unittest.TestCase):
         )
         self.assertEqual([row["mark"] for row in rows["storefronts"]], ["W-1"])
         self.assertEqual([row["mark"] for row in rows["windows"]], ["W-1"])
-        self.assertEqual(rows["storefronts"][0]["material"], "ALUMN")
-        self.assertEqual(rows["storefronts"][0]["glass_type"], "IMPACT RESISTANT GLASS")
-        self.assertEqual(rows["storefronts"][0]["finish"], "WHITE PNT")
+        self.assertEqual(rows["storefronts"][0]["material"], "ALUM/GLASS")
+        self.assertEqual(rows["storefronts"][0]["glass_type"], "IMPACT RESISTANT CLEAR")
+        self.assertEqual(rows["storefronts"][0]["finish"], "WHITE PAINT")
 
     def test_storefront_workbook_is_populated_from_w_mark_schedule_rows(self) -> None:
         item = self.extractor._glazing_item_from_cells(
@@ -193,9 +197,61 @@ class ScheduleExtractorRowTests(unittest.TestCase):
             self.assertEqual(sheet["B5"].value, "FIXED WINDOW")
             self.assertEqual(sheet["B8"].value, "3'-0\"")
             self.assertEqual(sheet["B9"].value, "8'-6\"")
-            self.assertEqual(sheet["B10"].value, "ALUMN")
-            self.assertEqual(sheet["B11"].value, "IMPACT RESISTANT GLASS")
-            self.assertEqual(sheet["B12"].value, "WHITE PNT")
+            self.assertEqual(sheet["B10"].value, "ALUM/GLASS")
+            self.assertEqual(sheet["B11"].value, "IMPACT RESISTANT CLEAR")
+            self.assertEqual(sheet["B12"].value, "WHITE PAINT")
+
+    def test_6300_window_type_diagram_overrides_storefront_rows(self) -> None:
+        base = {
+            "mark": "",
+            "quantity": "1",
+            "width": "3'-0\"",
+            "height": "8'-6\"",
+            "type": "FIXED WINDOW",
+            "material": "ALUM/GLASS",
+            "glass_type": "IMPACT RESISTANT CLEAR",
+            "finish": "WHITE PAINT",
+            "noa": "NOA No. 20-1208.10",
+            "brand_product": "",
+            "level": "",
+            "remarks": "",
+            "panels": "",
+            "source_schedule": "GLAZING SCHEDULE",
+            "extraction_status": "STRUCTURED VALIDATED - glazing schedule",
+            "source": "extracted_schedules.json",
+        }
+        quote_rows = {
+            "windows": [
+                {**base, "mark": "W-1", "width": "2'-0\"", "height": "15'-6\""},
+                {**base, "mark": "W-2"},
+                {**base, "mark": "W-2A"},
+            ],
+            "storefronts": [
+                {**base, "mark": "W-1", "width": "2'-0\"", "height": "15'-6\""},
+                {**base, "mark": "W-2"},
+                {**base, "mark": "W-2A"},
+            ],
+            "doors": [],
+        }
+        _apply_6300_window_type_overrides_from_text(
+            quote_rows,
+            "6300 BLOCK SPACES WINDOW TYPE: FRONT FIXED WINDOWS + GLASS DOOR BACK FIXED WINDOWS + GLASS DOOR",
+        )
+        self.assertEqual([row["mark"] for row in quote_rows["storefronts"]], ["W-1", "W-1A", "W-2", "W-2A"])
+        self.assertEqual(quote_rows["windows"][0]["width"], "15'-6\"")
+        self.assertEqual(quote_rows["windows"][0]["height"], "2'-0\"")
+        self.assertEqual(quote_rows["storefronts"][0]["quantity"], "11")
+        self.assertEqual(quote_rows["storefronts"][0]["panels"], "11")
+        self.assertEqual(quote_rows["storefronts"][1]["quantity"], "2")
+        self.assertEqual(quote_rows["storefronts"][1]["panels"], "2")
+        self.assertEqual(
+            quote_rows["storefronts"][1]["quote_notes"],
+            "Fixed Window | NOA No. 21-0127.07",
+        )
+        self.assertEqual(quote_rows["storefronts"][2]["type"], "BACK FIXED WINDOW + GLASS DOOR")
+        self.assertEqual(quote_rows["storefronts"][2]["width"], "15'-0\"")
+        self.assertEqual(quote_rows["storefronts"][3]["type"], "FRONT FIXED WINDOW + GLASS DOOR")
+        self.assertEqual(quote_rows["storefronts"][3]["width"], "12'-0\"")
 
     def test_shifted_architectural_door_schedule_row_exports_key_fields(self) -> None:
         door = self.extractor._door_item_from_cells(
@@ -279,6 +335,14 @@ class ScheduleExtractorRowTests(unittest.TestCase):
         self.assertEqual(
             requirements,
             {"u_factor": "1.08", "shgc": "0.45", "source": "A-7.0"},
+        )
+        r_value_requirements = _parse_glazing_requirements(
+            "GLASS: U-VALUE = 1.4\nSHGC = 0.73",
+            "A-8.02",
+        )
+        self.assertEqual(
+            r_value_requirements,
+            {"u_factor": "1.4", "shgc": "0.73", "source": "A-8.02"},
         )
 
     def test_storefront_package_reconciles_explicit_thermal_requirements(self) -> None:
