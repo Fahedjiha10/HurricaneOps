@@ -117,6 +117,86 @@ class ScheduleExtractorRowTests(unittest.TestCase):
         self.assertEqual(rows[0]["frame_material"], "WOOD")
         self.assertEqual(rows[0]["frame_finish"], "PAINTED WOOD")
 
+    def test_window_storefront_schedule_rows_export_to_storefront_workbook_shape(self) -> None:
+        result = self.extractor._extract_table_rows(
+            [
+                [
+                    [
+                        "",
+                        "W-1",
+                        "FIXED WINDOW",
+                        "WHITE PNT ALUMN WITH\nIMPACT RESISTANT GLASS",
+                        "2'-0\"",
+                        "15'-6\"",
+                        "2'-5\"",
+                        "NOA No. 21-0127.07",
+                    ]
+                ]
+            ],
+            "",
+            Path("A-8.02-WINDOW-SCHEDULE.pdf"),
+            1,
+            "pdfplumber",
+        )
+        item = result.schedules[0].items[0]
+        self.assertIsNotNone(item)
+        self.assertEqual(item.tag, "W-1")
+        self.assertEqual(item.width_inches, 24.0)
+        self.assertEqual(item.height_inches, 186.0)
+        self.assertEqual(item.material, "ALUMN")
+        self.assertEqual(item.glass_type, "IMPACT RESISTANT GLASS")
+        self.assertEqual(item.finish, "WHITE PNT")
+        self.assertEqual(item.noa, "NOA No. 21-0127.07")
+        self.assertGreaterEqual(item.confidence, 0.85)
+
+        rows = quote_rows_from_structured(
+            result
+        )
+        self.assertEqual([row["mark"] for row in rows["storefronts"]], ["W-1"])
+        self.assertEqual([row["mark"] for row in rows["windows"]], ["W-1"])
+        self.assertEqual(rows["storefronts"][0]["material"], "ALUMN")
+        self.assertEqual(rows["storefronts"][0]["glass_type"], "IMPACT RESISTANT GLASS")
+        self.assertEqual(rows["storefronts"][0]["finish"], "WHITE PNT")
+
+    def test_storefront_workbook_is_populated_from_w_mark_schedule_rows(self) -> None:
+        item = self.extractor._glazing_item_from_cells(
+            [
+                "",
+                "W-2A",
+                "FIXED WINDOW",
+                "WHITE PNT ALUMN WITH IMPACT RESISTANT GLASS",
+                "3'-0\"",
+                "8'-6\"",
+                "0'-0\"",
+                "NOA No. 20-1208.10",
+            ],
+            None,
+        )
+        rows = quote_rows_from_structured(
+            ExtractionResult(schedules=[GlazingSchedule("6300 block", 1, [item])])
+        )
+        with TemporaryDirectory() as temp_dir:
+            draft_path = Path(temp_dir) / "04_Quote_Workbook" / "draft.xlsx"
+            draft_path.parent.mkdir()
+            (Path(temp_dir) / "02_Schedules").mkdir()
+            _create_workbook_draft(
+                Path(__file__).resolve().parents[1] / "00_INBOX" / "Template for Quotes .xlsx",
+                draft_path,
+                rows["windows"],
+                rows["storefronts"],
+                [],
+                [],
+            )
+            workbook = load_workbook(draft_path, data_only=False)
+            sheet = workbook["Storefronts"]
+            self.assertEqual(sheet["B4"].value, "W-2A")
+            self.assertEqual(sheet["B5"].value, "FIXED WINDOW")
+            self.assertEqual(sheet["B8"].value, "3'-0\"")
+            self.assertEqual(sheet["B9"].value, "8'-6\"")
+            self.assertEqual(sheet["B10"].value, "ALUMN")
+            self.assertEqual(sheet["B11"].value, "IMPACT RESISTANT GLASS")
+            self.assertEqual(sheet["B12"].value, "WHITE PNT")
+
     def test_shifted_architectural_door_schedule_row_exports_key_fields(self) -> None:
         door = self.extractor._door_item_from_cells(
             [

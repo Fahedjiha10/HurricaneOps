@@ -28,7 +28,7 @@ TITLE_PATTERNS = {
     "window": re.compile(r"\bWINDOW\s+SCHEDULE\b", flags=re.IGNORECASE),
     "door": re.compile(r"\bDOOR\s+SCHEDULE\b", flags=re.IGNORECASE),
 }
-GLAZING_TAG_RE = re.compile(r"^[A-Z]+\d+[A-Z]?$", flags=re.IGNORECASE)
+GLAZING_TAG_RE = re.compile(r"^[A-Z]+-?\d+[A-Z]?$", flags=re.IGNORECASE)
 DOOR_NUMBER_RE = re.compile(r"^\d{2,5}$")
 LEVEL_RE = re.compile(r"\bLEVEL\s+\d+\b", flags=re.IGNORECASE)
 DIMENSION_TEXT_RE = r"""\d+\s*'\s*-\s*\d+(?:\s+\d+\s*/\s*\d+)?\s*" """
@@ -69,6 +69,33 @@ def _door_cells_starting_at_identifier(values: list[str]) -> list[str]:
     return values
 
 
+def _opening_cells_starting_at_identifier(values: list[str]) -> list[str]:
+    for index, value in enumerate(values[:3]):
+        if GLAZING_TAG_RE.fullmatch(value):
+            return values[index:]
+    return values
+
+
+def _split_opening_material(value: str) -> tuple[str | None, str | None, str | None]:
+    cleaned = _clean(value)
+    if not cleaned:
+        return None, None, None
+    storefront_match = re.fullmatch(
+        r"(?P<finish>.+?)\s+"
+        r"(?P<material>ALUMN?|ALUM\.?|ALUMINUM)\s+WITH\s+"
+        r"(?P<glass>.+)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if storefront_match:
+        return (
+            _clean(storefront_match.group("material")).upper(),
+            _clean(storefront_match.group("glass")).upper(),
+            _clean(storefront_match.group("finish")).upper(),
+        )
+    return cleaned, None, None
+
+
 def _repair_architectural_door_location(
     location: str, remarks: str
 ) -> tuple[str, str]:
@@ -94,6 +121,9 @@ def _noa_from_text(value: str) -> str | None:
 
 def _expand_multiline_cells(values: list[str]) -> list[list[str]]:
     split_cells = [value.splitlines() if "\n" in value else [value] for value in values]
+    multiline_cells = [parts for parts in split_cells if len(parts) > 1]
+    if len(multiline_cells) < 2:
+        return [values]
     row_count = max((len(parts) for parts in split_cells), default=1)
     if row_count <= 1:
         return [values]
@@ -301,6 +331,54 @@ class ScheduleExtractor:
     def _glazing_item_from_cells(
         self, values: list[str], level: str | None
     ) -> GlazingItem | None:
+        values = _opening_cells_starting_at_identifier(values)
+        if (
+            len(values) >= 6
+            and GLAZING_TAG_RE.fullmatch(values[0])
+            and not _clean(values[2]).isdigit()
+            and _looks_like_dimension(values[3])
+            and _looks_like_dimension(values[4])
+        ):
+            width_raw = _repair_split_fraction(values[3])
+            height_raw = _repair_split_fraction(values[4])
+            material, glass_type, finish = _split_opening_material(values[2])
+            remarks_parts = []
+            if len(values) > 5 and values[5]:
+                remarks_parts.append(f"Sill HT: {values[5]}")
+            if len(values) > 6 and values[6]:
+                extra_note = _clean(values[6])
+                extra_noa = _noa_from_text(extra_note)
+                if not extra_noa or extra_note.upper() != extra_noa.upper():
+                    remarks_parts.append(extra_note)
+            row = {
+                "level": level,
+                "tag": values[0],
+                "description": values[1],
+                "count": 1,
+                "width_raw": width_raw,
+                "height_raw": height_raw,
+                "width_inches": parse_architectural_dimension(width_raw),
+                "height_inches": parse_architectural_dimension(height_raw),
+                "area_sf": area_square_feet(
+                    parse_architectural_dimension(width_raw),
+                    parse_architectural_dimension(height_raw),
+                ),
+                "remarks": " | ".join(remarks_parts) or None,
+                "noa": _noa_from_text(" ".join(values[5:])),
+                "brand_product": None,
+                "material": material,
+                "glass_type": glass_type,
+                "finish": finish,
+            }
+            warnings = validate_glazing_row(row)
+            warnings.append(
+                "No explicit quantity column was present; verify counts against plans and elevations."
+            )
+            confidence = confidence_score(row, warnings, "tag")
+            row["warnings"] = add_human_review_warning(confidence, warnings)
+            row["confidence"] = confidence
+            return GlazingItem(**row)
+
         if len(values) < 5 or not GLAZING_TAG_RE.fullmatch(values[0]):
             return None
         if not any(

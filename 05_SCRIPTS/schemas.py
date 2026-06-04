@@ -20,6 +20,9 @@ class GlazingItem:
     brand_product: str | None
     confidence: float
     warnings: list[str] = field(default_factory=list)
+    material: str | None = None
+    glass_type: str | None = None
+    finish: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

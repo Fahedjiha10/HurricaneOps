@@ -240,8 +240,12 @@ def _fallback_sheet_title(pdf_path: Path, page_text: str) -> str:
     normalized_text = _normalized_search_text(page_text)
     for title in (
         "DOOR SCHEDULES",
+        "DOOR SCHEDULE",
         "WINDOW SCHEDULES",
+        "WINDOW SCHEDULE",
         "STOREFRONT SCHEDULES",
+        "STOREFRONT SCHEDULE",
+        "GLAZING SCHEDULE",
         "WIND PRESSURES",
         "WINDOWS & DOORS PRESSURES ELEVATIONS",
         "FLOOR PLAN",
@@ -273,6 +277,23 @@ def _sheet_compartments(
         not is_index_page
         and (not title_text or title_text == filename_text or "schedule" in title_text)
     )
+    page_has_window_schedule = (
+        not is_index_page
+        and (
+            "window schedule" in page_text_normalized
+            or "glazing schedule" in page_text_normalized
+        )
+    )
+    page_has_storefront_schedule = (
+        not is_index_page
+        and (
+            "storefront schedule" in page_text_normalized
+            or (
+                "storefront" in page_text_normalized
+                and "window schedule" in page_text_normalized
+            )
+        )
+    )
 
     if "door schedule" in title_text or (
         "door schedule" in page_text_normalized and allow_page_text_schedule_fallback
@@ -281,6 +302,7 @@ def _sheet_compartments(
     if (
         "window schedule" in title_text
         or "glazing schedule" in title_text
+        or page_has_window_schedule
         or (
             allow_page_text_schedule_fallback
             and (
@@ -296,6 +318,7 @@ def _sheet_compartments(
         compartments.add("window_schedules")
     if (
         "storefront schedule" in title_text
+        or page_has_storefront_schedule
         or (
             allow_page_text_schedule_fallback
             and (
